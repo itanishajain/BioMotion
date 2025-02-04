@@ -10,9 +10,11 @@ import numpy as np
 # Initialize Mediapipe
 mp_face_mesh = mp.solutions.face_mesh
 mp_hands = mp.solutions.hands
+mp_pose = mp.solutions.pose
 
 face_mesh = mp_face_mesh.FaceMesh(min_detection_confidence=0.8, min_tracking_confidence=0.8)
 hands = mp_hands.Hands(min_detection_confidence=0.8, min_tracking_confidence=0.8)
+pose = mp_pose.Pose(min_detection_confidence=0.8, min_tracking_confidence=0.8)
 
 # Open Camera
 cap = cv2.VideoCapture(0)
@@ -36,18 +38,11 @@ def analyze_emotion(frame):
         analysis = DeepFace.analyze(rgb_frame, actions=['emotion'], enforce_detection=False)
         if analysis:
             emotion = analysis[0]['dominant_emotion']
-            if emotion in ["angry", "sad"]:
-                feedback = "Try smiling for a more positive expression."
-            elif emotion in ["happy", "surprise"]:
-                feedback = "Great expression! Maintain eye contact."
-            else:
-                feedback = "Neutral expression detected. Maintain confidence."
-            summary = f"Detected emotion: {emotion}. {feedback}"
+            feedback = f"Detected emotion: {emotion}. Maintain a confident expression."
     except Exception as e:
         print(f"Error in emotion detection: {e}")
         emotion = "Neutral"
         feedback = "Face not detected clearly. Adjust lighting."
-        summary = "Face not detected properly. Improve lighting or adjust posture."
 
 # Function to handle speech synthesis
 def speak(text):
@@ -66,6 +61,7 @@ while cap.isOpened():
     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     face_results = face_mesh.process(rgb_frame)
     hand_results = hands.process(rgb_frame)
+    pose_results = pose.process(rgb_frame)
 
     current_time = time.time()
     if current_time - last_emotion_time > 5 and face_results.multi_face_landmarks:
@@ -82,47 +78,50 @@ while cap.isOpened():
 
             if thumb_tip.y < index_tip.y and thumb_tip.y < middle_tip.y:
                 gesture = "Thumbs up! Well done."
-                feedback = "Great job! Keep using positive gestures."
             elif index_tip.y < wrist.y:
                 gesture = "Open palm detected."
-                feedback = "Open gestures show confidence. Keep it up!"
             elif thumb_tip.x < index_tip.x and thumb_tip.x < middle_tip.x:
                 gesture = "Pointing gesture detected."
-                feedback = "Pointing is good for emphasis, but use sparingly."
             else:
                 gesture = "Hand detected, no recognized gesture."
-                feedback = "Ensure full hand is visible for better recognition."
-    else:
-        feedback = "Keep hands visible for better recognition."
     
     # Detect posture issues
+    if pose_results.pose_landmarks:
+        left_shoulder = pose_results.pose_landmarks.landmark[mp_pose.PoseLandmark.LEFT_SHOULDER]
+        right_shoulder = pose_results.pose_landmarks.landmark[mp_pose.PoseLandmark.RIGHT_SHOULDER]
+        left_hip = pose_results.pose_landmarks.landmark[mp_pose.PoseLandmark.LEFT_HIP]
+        right_hip = pose_results.pose_landmarks.landmark[mp_pose.PoseLandmark.RIGHT_HIP]
+
+        shoulder_diff = abs(left_shoulder.y - right_shoulder.y)
+        hip_diff = abs(left_hip.y - right_hip.y)
+
+        if shoulder_diff > 0.05:
+            feedback = "Adjust your shoulders to stand upright."
+        elif hip_diff > 0.05:
+            feedback = "Keep your hips aligned for better posture."
+
+    # Attire and Face Analysis
     if face_results.multi_face_landmarks:
-        for face_landmarks in face_results.multi_face_landmarks:
-            nose_tip = face_landmarks.landmark[1]
-            forehead = face_landmarks.landmark[10]
-            
-            if nose_tip.y > forehead.y:
-                feedback += " Keep your head up for better posture."
-            else:
-                feedback += " Good posture detected."
+        feedback = "Face detected. "
+        if emotion in ["angry", "sad"]:
+            feedback += "Try smiling for a more positive expression."
+        elif emotion in ["happy", "surprise"]:
+            feedback += "Your facial expression looks great!"
+        else:
+            feedback += "Maintain a confident expression."
+        feedback += " Fix your hair if it's messy for a neat look."
     else:
-        feedback += " Face not fully detected, adjust position."
+        feedback = "Face not fully detected, adjust position."
     
-    # Additional improvement suggestions
-    if "Neutral" in emotion:
-        feedback += " Add some facial expressions to improve engagement."
-    if hand_results.multi_hand_landmarks is None:
-        feedback += " Use more hand gestures for effective communication."
-    
-    summary = f"Detected emotion: {emotion}. Gesture: {gesture}. {feedback}"
+    summary = f"{gesture}. {feedback}"
     text = f"Emotion: {emotion}, Gesture: {gesture}, Feedback: {feedback}"
     cv2.putText(frame, summary, (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
     if running and (current_time - last_speech_time > 4):
         last_speech_time = current_time
-        threading.Thread(target=speak, args=(summary,)).start()
+        threading.Thread(target=speak, args=(feedback,)).start()
 
-    cv2.imshow("Face & Hand Analysis", frame)
+    cv2.imshow("BioMotion - Virtual Mirror", frame)
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
         running = False
