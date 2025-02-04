@@ -5,19 +5,22 @@ from gtts import gTTS
 import os
 import threading
 import time
+import numpy as np
 
 # Initialize Mediapipe
 mp_face_mesh = mp.solutions.face_mesh
 mp_hands = mp.solutions.hands
-face_mesh = mp_face_mesh.FaceMesh()
-hands = mp_hands.Hands()
+
+face_mesh = mp_face_mesh.FaceMesh(min_detection_confidence=0.7, min_tracking_confidence=0.7)
+hands = mp_hands.Hands(min_detection_confidence=0.7, min_tracking_confidence=0.7)
 
 # Open Camera
 cap = cv2.VideoCapture(0)
 
 # Variables for storing results
-emotion = "Unknown"
+emotion = "Neutral"
 gesture = "No gesture detected."
+feedback = "Adjust posture for better recognition."
 last_emotion_time = 0
 last_speech_time = 0
 running = True  # Control flag for speaking
@@ -25,14 +28,23 @@ prev_speech_text = ""
 
 # Function to detect emotion in a separate thread
 def analyze_emotion(frame):
-    global emotion
+    global emotion, feedback
     try:
-        cv2.imwrite("temp.jpg", frame)
-        analysis = DeepFace.analyze("temp.jpg", actions=['emotion'])
-        emotion = analysis[0]['dominant_emotion']
+        small_frame = cv2.resize(frame, (300, 300))
+        rgb_frame = cv2.cvtColor(small_frame, cv2.COLOR_BGR2RGB)
+        analysis = DeepFace.analyze(rgb_frame, actions=['emotion'], enforce_detection=False)
+        if analysis:
+            emotion = analysis[0]['dominant_emotion']
+            if emotion in ["angry", "sad"]:
+                feedback = "Try smiling for a more positive expression."
+            elif emotion in ["happy", "surprise"]:
+                feedback = "Great expression! Maintain eye contact."
+            else:
+                feedback = "Neutral expression detected. Maintain confidence."
     except Exception as e:
         print(f"Error in emotion detection: {e}")
-        emotion = "Unknown"
+        emotion = "Neutral"
+        feedback = "Face not detected clearly. Adjust lighting."
 
 # Function to handle speech synthesis
 def speak(text):
@@ -48,47 +60,49 @@ while cap.isOpened():
     if not ret:
         break
 
-    # Convert BGR to RGB
     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
-    # Detect face landmarks
     face_results = face_mesh.process(rgb_frame)
-
-    # Detect hand landmarks
     hand_results = hands.process(rgb_frame)
 
-    # Run emotion detection every 5 seconds
     current_time = time.time()
     if current_time - last_emotion_time > 5 and face_results.multi_face_landmarks:
         last_emotion_time = current_time
-        threading.Thread(target=analyze_emotion, args=(frame,)).start()
+        threading.Thread(target=analyze_emotion, args=(frame.copy(),)).start()
 
-    # Gesture Analysis
     gesture = "No gesture detected."
     if hand_results.multi_hand_landmarks:
         for hand_landmarks in hand_results.multi_hand_landmarks:
             thumb_tip = hand_landmarks.landmark[4]
             index_tip = hand_landmarks.landmark[8]
+            middle_tip = hand_landmarks.landmark[12]
+            wrist = hand_landmarks.landmark[0]
 
-            if thumb_tip.y < index_tip.y:
-                gesture = "Thumbs up! Good job!"
+            if thumb_tip.y < index_tip.y and thumb_tip.y < middle_tip.y:
+                gesture = "Thumbs up! Well done."
+                feedback = "Great job! Keep using positive gestures."
+            elif index_tip.y < wrist.y:
+                gesture = "Open palm detected."
+                feedback = "Open gestures show confidence. Keep it up!"
+            elif thumb_tip.x < index_tip.x and thumb_tip.x < middle_tip.x:
+                gesture = "Pointing gesture detected."
+                feedback = "Pointing is good for emphasis, but use sparingly."
             else:
-                gesture = "Hand detected, no thumbs up."
+                gesture = "Hand detected, no recognized gesture."
+                feedback = "Ensure full hand is visible for better recognition."
+    else:
+        feedback = "Keep hands visible for better recognition."
 
-    # Display results on frame
-    text = f"Emotion: {emotion}, Gesture: {gesture}"
-    cv2.putText(frame, text, (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+    text = f"Emotion: {emotion}, Gesture: {gesture}, Feedback: {feedback}"
+    cv2.putText(frame, text, (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
-    # Speak only when the webcam is running & every 3 seconds
-    if running and (current_time - last_speech_time > 3):
+    if running and (current_time - last_speech_time > 4):
         last_speech_time = current_time
         threading.Thread(target=speak, args=(text,)).start()
 
-    # Show frame
     cv2.imshow("Face & Hand Analysis", frame)
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
-        running = False  # Stop speech
+        running = False
         break
 
 cap.release()
