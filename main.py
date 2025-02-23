@@ -121,7 +121,7 @@ while cap.isOpened():
         last_speech_time = current_time
         threading.Thread(target=speak, args=(feedback,)).start()
 
-    cv2.imshow("BioMotion - Virtual Mirror", frame)
+    cv2.imshow("Picture", frame)
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
         running = False
